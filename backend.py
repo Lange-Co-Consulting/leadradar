@@ -427,10 +427,11 @@ def api_scrape():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("RAILWAY_ENVIRONMENT") is None  # debug nur lokal
     print(f"""
 ╔══════════════════════════════════════╗
 ║  LeadRadar Backend gestartet         ║
 ║  → http://localhost:{port}             ║
 ╚══════════════════════════════════════╝
 """)
-    app.run(debug=True, port=port, host="0.0.0.0")
+    app.run(debug=debug, port=port, host="0.0.0.0")
