@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LeadRadar</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Epilogue:wght@400;600;800;900&display=swap" rel="stylesheet">
+<style>
+/* ── THEME TOKENS ── */
+[data-theme="dark"] {
+  --bg:       #0c0c12;
+  --surface:  #13131e;
+  --surface2: #1c1c2b;
+  --border:   #2c2c42;
+  --accent:   #ff4500;
+  --accent2:  #ff8c00;
+  --green:    #00d97e;
+  --yellow:   #ffc200;
+  --red:      #ff2d55;
+  --blue:     #3d9fff;
+  --text:     #e8e8f4;
+  --text2:    #9090b0;
+  --shadow:   rgba(0,0,0,0.5);
+  --card-bg:  #13131e;
+}
+[data-theme="light"] {
+  --bg:       #f0f0f6;
+  --surface:  #ffffff;
+  --surface2: #f5f5fa;
+  --border:   #dcdce8;
+  --accent:   #e03a00;
+  --accent2:  #d47500;
+  --green:    #00a85a;
+  --yellow:   #c89000;
+  --red:      #d4002a;
+  --blue:     #1a73d4;
+  --text:     #1a1a2e;
+  --text2:    #606080;
+  --shadow:   rgba(0,0,0,0.1);
+  --card-bg:  #ffffff;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: 'Epilogue', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  transition: background .3s, color .3s;
+}
+
+/* subtle dot grid */
+body::before {
+  content:'';
+  position:fixed; inset:0;
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events:none; z-index:0;
+  opacity:.5;
+}
+
+.wrap { max-width:1140px; margin:0 auto; padding:0 20px; position:relative; z-index:1; }
+
+/* ── HEADER ── */
+header {
+  padding: 28px 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 32px;
+}
+.brand { display:flex; align-items:center; gap:12px; }
+.brand-icon {
+  width:38px; height:38px;
+  background: var(--accent);
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px;
+  clip-path: polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+}
+.brand h1 {
+  font-size:22px; font-weight:900; letter-spacing:-.5px;
+  color: var(--text);
+}
+.brand h1 span { color: var(--accent); }
+.brand p {
+  font-family:'DM Mono',monospace;
+  font-size:10px; color:var(--text2); text-transform:uppercase; letter-spacing:.1em;
+  margin-top:1px;
+}
+
+/* theme toggle */
+.theme-toggle {
+  display:flex; align-items:center; gap:8px;
+  font-family:'DM Mono',monospace; font-size:11px;
+  color:var(--text2); cursor:pointer; user-select:none;
+  border:1px solid var(--border); padding:7px 14px;
+  background:transparent; color:var(--text2);
+  transition: border-color .2s, color .2s;
+}
+.theme-toggle:hover { border-color:var(--accent); color:var(--accent); }
+.toggle-track {
+  width:34px; height:18px;
+  background:var(--border);
+  border-radius:9px;
+  position:relative;
+  transition:background .3s;
+}
+.toggle-track.on { background:var(--accent); }
+.toggle-thumb {
+  position:absolute; top:2px; left:2px;
+  width:14px; height:14px;
+  background:#fff; border-radius:50%;
+  transition:transform .3s;
+}
+.toggle-track.on .toggle-thumb { transform:translateX(16px); }
+
+/* ── SEARCH PANEL ── */
+.search-panel {
+  background:var(--surface);
+  border:1px solid var(--border);
+  padding:24px 28px;
+  margin-bottom:24px;
+  position:relative;
+  box-shadow: 0 2px 16px var(--shadow);
+}
+.search-panel::before {
+  content:'SUCHE';
+  position:absolute; top:0; right:28px;
+  transform:translateY(-50%);
+  background:var(--accent); color:#fff;
+  font-family:'DM Mono',monospace; font-size:9px;
+  letter-spacing:.15em; padding:3px 10px;
+}
+.search-row {
+  display:grid;
+  grid-template-columns:1fr 1fr 120px auto auto;
+  gap:10px; align-items:end;
+}
+.field { display:flex; flex-direction:column; gap:5px; }
+label {
+  font-family:'DM Mono',monospace;
+  font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--text2);
+}
+input, select {
+  background:var(--bg);
+  border:1px solid var(--border);
+  color:var(--text);
+  font-family:'DM Mono',monospace;
+  font-size:13px;
+  padding:10px 14px;
+  outline:none;
+  transition:border-color .2s;
+  width:100%;
+}
+input:focus, select:focus { border-color:var(--accent); }
+input::placeholder { color:var(--text2); }
+select option { background:var(--surface); }
+
+.btn {
+  padding:10px 22px;
+  font-family:'Epilogue',sans-serif;
+  font-size:13px; font-weight:700;
+  border:none; cursor:pointer;
+  transition:all .2s; white-space:nowrap;
+}
+.btn-primary {
+  background:var(--accent); color:#fff;
+  clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+}
+.btn-primary:hover { background:#ff6622; }
+.btn-primary:disabled { background:var(--border); color:var(--text2); cursor:not-allowed; }
+.btn-outline {
+  background:transparent;
+  border:1px solid var(--green);
+  color:var(--green);
+  font-family:'DM Mono',monospace; font-size:11px;
+}
+.btn-outline:hover { background:var(--green); color:var(--bg); }
+
+/* ── STATUS BAR ── */
+.status-bar {
+  display:none; align-items:center; gap:10px;
+  padding:10px 16px; margin-bottom:20px;
+  background:var(--surface2); border:1px solid var(--border);
+  border-left:3px solid var(--accent);
+  font-family:'DM Mono',monospace; font-size:11px; color:var(--text2);
+}
+.status-bar.show { display:flex; }
+.pulse { width:7px; height:7px; border-radius:50%; background:var(--accent); animation:blink 1s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+/* ── STATS ── */
+.stats { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:24px; }
+.stat {
+  background:var(--surface); border:1px solid var(--border);
+  padding:16px 18px; position:relative; overflow:hidden;
+}
+.stat::after {
+  content:''; position:absolute; bottom:0; left:0; right:0; height:2px;
+  transform:scaleX(0); transform-origin:left; transition:transform .5s;
+}
+.stat.lit::after { transform:scaleX(1); }
+.stat.s-top::after { background:var(--red); }
+.stat.s-good::after { background:var(--accent2); }
+.stat.s-possible::after { background:var(--yellow); }
+.stat.s-total::after { background:var(--blue); }
+.stat-n {
+  font-family:'DM Mono',monospace; font-size:30px; font-weight:500; line-height:1;
+}
+.stat-n.red { color:var(--red); }
+.stat-n.orange { color:var(--accent2); }
+.stat-n.yellow { color:var(--yellow); }
+.stat-n.blue { color:var(--blue); }
+.stat-lbl { font-family:'DM Mono',monospace; font-size:9px; letter-spacing:.1em; color:var(--text2); text-transform:uppercase; margin-top:4px; }
+
+/* ── LEADS AREA ── */
+.leads-wrap { display:none; }
+.leads-wrap.show { display:block; }
+
+.leads-header {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:14px; flex-wrap:wrap; gap:10px;
+}
+.leads-title { font-family:'DM Mono',monospace; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--text2); }
+
+.tabs { display:flex; gap:3px; }
+.tab {
+  font-family:'DM Mono',monospace; font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+  padding:6px 13px; border:1px solid var(--border);
+  background:transparent; color:var(--text2); cursor:pointer; transition:all .15s;
+}
+.tab:hover { border-color:var(--accent); color:var(--accent); }
+.tab.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+/* ── LEAD CARD ── */
+.leads-list { display:flex; flex-direction:column; gap:6px; }
+
+.lcard {
+  background:var(--card-bg);
+  border:1px solid var(--border);
+  overflow:hidden;
+  transition:border-color .2s, box-shadow .2s;
+}
+.lcard:hover { border-color:var(--accent); box-shadow:0 2px 12px var(--shadow); }
+
+.lcard-top {
+  display:grid;
+  grid-template-columns:4px 1fr auto;
+  cursor:pointer;
+}
+.lbar { transition:background .3s; }
+.lcard.top  .lbar { background:var(--red); }
+.lcard.good .lbar { background:var(--accent2); }
+.lcard.possible .lbar { background:var(--yellow); }
+.lcard.none .lbar { background:var(--border); }
+
+.lmain {
+  padding:14px 18px;
+  display:flex; align-items:flex-start; gap:18px; flex-wrap:wrap;
+}
+.lname { font-size:15px; font-weight:700; min-width:160px; line-height:1.2; }
+
+.lmeta { display:flex; gap:18px; flex-wrap:wrap; flex:1; align-items:flex-start; }
+.mitem { display:flex; flex-direction:column; gap:2px; }
+.mkey { font-family:'DM Mono',monospace; font-size:8px; letter-spacing:.1em; text-transform:uppercase; color:var(--text2); }
+.mval { font-family:'DM Mono',monospace; font-size:12px; line-height:1.3; }
+.mval.bad  { color:var(--red); }
+.mval.warn { color:var(--accent2); }
+.mval.ok   { color:var(--green); }
+.mval.link a {
+  color:var(--blue); text-decoration:none;
+  border-bottom:1px dotted var(--blue);
+  transition:color .15s;
+}
+.mval.link a:hover { color:var(--accent); border-color:var(--accent); }
+
+.lscore {
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:10px 18px; min-width:72px;
+  background:var(--surface2); border-left:1px solid var(--border);
+}
+.snum { font-family:'DM Mono',monospace; font-size:22px; font-weight:500; line-height:1; }
+.slbl { font-family:'DM Mono',monospace; font-size:8px; text-transform:uppercase; letter-spacing:.1em; color:var(--text2); }
+
+.badge {
+  font-family:'DM Mono',monospace; font-size:8px; letter-spacing:.08em; text-transform:uppercase;
+  padding:3px 8px; border:1px solid;
+}
+.badge.top      { border-color:var(--red);    color:var(--red); }
+.badge.good     { border-color:var(--accent2); color:var(--accent2); }
+.badge.possible { border-color:var(--yellow); color:var(--yellow); }
+.badge.none     { border-color:var(--text2);  color:var(--text2); }
+
+/* ── DETAIL PANEL ── */
+.ldetail {
+  display:none; border-top:1px solid var(--border);
+  padding:18px 22px 20px 22px;
+  background:var(--surface2);
+  animation:slideDown .2s ease;
+}
+@keyframes slideDown { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:none} }
+.ldetail.open { display:block; }
+
+.detail-cols { display:grid; grid-template-columns:1fr 1.4fr; gap:14px; }
+
+.dbox {
+  background:var(--surface); border:1px solid var(--border);
+  padding:14px;
+}
+.dbox-title {
+  font-family:'DM Mono',monospace; font-size:9px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--text2); margin-bottom:10px;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.issues-ul { list-style:none; }
+.issues-ul li {
+  font-family:'DM Mono',monospace; font-size:11px;
+  color:var(--accent2); padding:3px 0;
+  display:flex; gap:8px; align-items:flex-start;
+}
+.issues-ul li::before { content:'▸'; color:var(--accent); flex-shrink:0; }
+.issues-ul li.ok { color:var(--green); }
+.issues-ul li.ok::before { content:'✓'; }
+
+.outreach-text {
+  font-family:'DM Mono',monospace; font-size:11px;
+  line-height:1.7; white-space:pre-wrap;
+  color:var(--text); word-break:break-word;
+}
+.copy-btn {
+  background:transparent; border:1px solid var(--border);
+  color:var(--text2); font-family:'DM Mono',monospace;
+  font-size:9px; padding:3px 9px; cursor:pointer;
+  letter-spacing:.08em; text-transform:uppercase; transition:all .2s;
+}
+.copy-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* ── LOADING ── */
+.loader {
+  display:none; position:fixed; inset:0;
+  background:rgba(12,12,18,.88); backdrop-filter:blur(4px);
+  z-index:200; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+}
+[data-theme="light"] .loader { background:rgba(240,240,246,.9); }
+.loader.show { display:flex; }
+.spin {
+  width:52px; height:52px;
+  border:3px solid var(--border); border-top-color:var(--accent);
+  border-radius:50%; animation:spin .7s linear infinite;
+}
+@keyframes spin { to{transform:rotate(360deg)} }
+.loader-label { font-family:'DM Mono',monospace; font-size:11px; letter-spacing:.15em; text-transform:uppercase; color:var(--text2); }
+.loader-step  { font-family:'DM Mono',monospace; font-size:11px; color:var(--accent); min-height:18px; }
+.prog-wrap { width:260px; height:2px; background:var(--border); }
+.prog-bar  { height:100%; background:var(--accent); transition:width .4s; }
+
+/* ── EMPTY ── */
+.empty {
+  text-align:center; padding:70px 20px; color:var(--text2);
+}
+.empty-icon { font-size:42px; margin-bottom:12px; opacity:.4; }
+.empty h3 { font-size:17px; color:var(--text); margin-bottom:6px; }
+.empty p { font-family:'DM Mono',monospace; font-size:11px; line-height:1.6; max-width:360px; margin:0 auto; }
+
+/* ── ERROR ── */
+.error-msg {
+  background:rgba(255,45,85,.1); border:1px solid var(--red);
+  color:var(--red); padding:12px 16px;
+  font-family:'DM Mono',monospace; font-size:12px;
+  display:none; margin-bottom:16px;
+}
+.error-msg.show { display:block; }
+
+/* ── RESPONSIVE ── */
+@media(max-width:760px){
+  .search-row { grid-template-columns:1fr 1fr; }
+  .stats { grid-template-columns:repeat(2,1fr); }
+  .detail-cols { grid-template-columns:1fr; }
+  header { flex-direction:column; gap:14px; align-items:flex-start; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- HEADER -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">📡</div>
+      <div>
+        <h1>Lead<span>Radar</span></h1>
+        <p>Findet Unternehmen ohne Website oder mit schlechter Online-Präsenz</p>
+      </div>
+    </div>
+    <button class="theme-toggle" onclick="toggleTheme()">
+      <span id="themeLabel">Light Mode</span>
+      <div class="toggle-track" id="toggleTrack">
+        <div class="toggle-thumb"></div>
+      </div>
+    </button>
+  </header>
+
+  <!-- SEARCH -->
+  <div class="search-panel">
+    <div class="search-row">
+      <div class="field">
+        <label>Branche / Begriff</label>
+        <input id="query" placeholder="z.B. Handwerker, Friseur, Restaurant…" value="Handwerker">
+      </div>
+      <div class="field">
+        <label>Stadt / Region</label>
+        <input id="location" placeholder="z.B. München, Berlin, Hamburg…" value="München">
+      </div>
+      <div class="field">
+        <label>Anzahl</label>
+        <select id="maxR">
+          <option value="10">10</option>
+          <option value="20" selected>20</option>
+          <option value="30">30</option>
+          <option value="50">50</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="startBtn" onclick="doSearch()">⚡ Starten</button>
+      <button class="btn btn-outline" id="exportBtn" onclick="exportCSV()" style="display:none">⬇ CSV</button>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div class="status-bar" id="statusBar">
+    <div class="pulse" id="pulseDot"></div>
+    <span id="statusText">Bereit</span>
+  </div>
+
+  <!-- ERROR -->
+  <div class="error-msg" id="errorMsg"></div>
+
+  <!-- STATS -->
+  <div class="stats">
+    <div class="stat s-top">  <div class="stat-n red"    id="n-top">—</div><div class="stat-lbl">🎯 Top Leads</div></div>
+    <div class="stat s-good"> <div class="stat-n orange" id="n-good">—</div><div class="stat-lbl">✅ Gute Leads</div></div>
+    <div class="stat s-possible"><div class="stat-n yellow" id="n-poss">—</div><div class="stat-lbl">⚠ Mögliche</div></div>
+    <div class="stat s-total"><div class="stat-n blue"   id="n-total">—</div><div class="stat-lbl">📊 Analysiert</div></div>
+  </div>
+
+  <!-- LEADS -->
+  <div class="leads-wrap" id="leadsWrap">
+    <div class="leads-header">
+      <span class="leads-title" id="leadsTitle">Ergebnisse</span>
+      <div class="tabs">
+        <button class="tab on" onclick="setFilter('all',this)">Alle</button>
+        <button class="tab"    onclick="setFilter('top',this)">Top</button>
+        <button class="tab"    onclick="setFilter('good',this)">Gut</button>
+        <button class="tab"    onclick="setFilter('possible',this)">Möglich</button>
+      </div>
+    </div>
+    <div class="leads-list" id="leadsList"></div>
+  </div>
+
+</div>
+
+<!-- LOADING -->
+<div class="loader" id="loader">
+  <div class="spin"></div>
+  <div class="loader-label">LeadRadar aktiv</div>
+  <div class="loader-step" id="loaderStep"></div>
+  <div class="prog-wrap"><div class="prog-bar" id="progBar" style="width:0%"></div></div>
+</div>
+
+<script>
+/* ── STATE ── */
+let allLeads = [];
+let activeFilter = 'all';
+const API = '';   // Gleiche Origin wie Flask
+
+/* ── THEME ── */
+function toggleTheme(){
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  document.getElementById('themeLabel').textContent = isDark ? 'Dark Mode' : 'Light Mode';
+  document.getElementById('toggleTrack').classList.toggle('on', !isDark);
+  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+}
+(function(){
+  const t = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', t);
+  if(t === 'light'){
+    document.getElementById('themeLabel').textContent = 'Dark Mode';
+    document.getElementById('toggleTrack').classList.add('on');
+  }
+})();
+
+/* ── SEARCH ── */
+async function doSearch(){
+  const q  = document.getElementById('query').value.trim();
+  const loc = document.getElementById('location').value.trim();
+  const max = document.getElementById('maxR').value;
+  if(!q||!loc){ alert('Bitte Branche und Stadt eingeben.'); return; }
+
+  setError('');
+  document.getElementById('startBtn').disabled = true;
+  document.getElementById('loader').classList.add('show');
+  document.getElementById('leadsWrap').classList.remove('show');
+  resetStats();
+
+  const steps = [
+    'Verbinde mit Gelbe Seiten…',
+    'Lese Einträge aus…',
+    'Prüfe Websites…',
+    'Analysiere Qualität…',
+    'Generiere Outreach-Texte…',
+    'Sortiere Leads…'
+  ];
+  let si = 0;
+  const stepTimer = setInterval(()=>{
+    document.getElementById('loaderStep').textContent = steps[si % steps.length];
+    document.getElementById('progBar').style.width = Math.min(90, (si+1)/steps.length*100)+'%';
+    si++;
+  }, 1400);
+
+  try {
+    const res = await fetch(`${API}/api/scrape?query=${encodeURIComponent(q)}&location=${encodeURIComponent(loc)}&max=${max}`);
+    if(!res.ok){ const e = await res.json(); throw new Error(e.error || 'Server-Fehler'); }
+    const data = await res.json();
+
+    clearInterval(stepTimer);
+    document.getElementById('progBar').style.width = '100%';
+    await sleep(300);
+
+    allLeads = data.leads || [];
+    renderStats(data.stats || {});
+    renderLeads(allLeads);
+
+    document.getElementById('leadsWrap').classList.add('show');
+    document.getElementById('exportBtn').style.display = allLeads.length ? 'block' : 'none';
+    showStatus(`${allLeads.length} Unternehmen analysiert — ${(data.stats.top||0)+(data.stats.good||0)} qualifizierte Leads`);
+
+  } catch(err){
+    clearInterval(stepTimer);
+    setError(`Fehler: ${err.message} — Läuft backend.py auf Port 5000?`);
+    showStatus('Fehler beim Laden der Daten.');
+  } finally {
+    document.getElementById('loader').classList.remove('show');
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('progBar').style.width = '0%';
+  }
+}
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+/* ── STATS ── */
+function resetStats(){
+  ['top','good','poss','total'].forEach(k=> document.getElementById('n-'+k).textContent='—');
+  document.querySelectorAll('.stat').forEach(el=>el.classList.remove('lit'));
+}
+function renderStats(s){
+  animN('n-top',   s.top    || 0);
+  animN('n-good',  s.good   || 0);
+  animN('n-poss',  s.possible|| 0);
+  animN('n-total', s.total  || 0);
+  setTimeout(()=> document.querySelectorAll('.stat').forEach(el=>el.classList.add('lit')), 100);
+}
+function animN(id, target){
+  const el = document.getElementById(id);
+  let v=0; const step=Math.max(1,Math.ceil(target/20));
+  const iv = setInterval(()=>{ v=Math.min(v+step,target); el.textContent=v; if(v>=target)clearInterval(iv); },40);
+}
+
+/* ── STATUS ── */
+function showStatus(msg){
+  const bar = document.getElementById('statusBar');
+  bar.classList.add('show');
+  document.getElementById('statusText').textContent = msg;
+  document.getElementById('pulseDot').style.animation = 'none';
+}
+function setError(msg){
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.classList.toggle('show', !!msg);
+}
+
+/* ── RENDER LEADS ── */
+function setFilter(f, btn){
+  activeFilter = f;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+  renderLeads(allLeads);
+}
+
+function renderLeads(leads){
+  const list = document.getElementById('leadsList');
+  const filtered = leads.filter(l=>{
+    if(activeFilter==='top')     return l.rec_class==='top';
+    if(activeFilter==='good')    return l.rec_class==='good';
+    if(activeFilter==='possible') return l.rec_class==='possible';
+    return true;
+  });
+
+  document.getElementById('leadsTitle').textContent =
+    `${filtered.length} Ergebnis${filtered.length!==1?'se':''} — sortiert nach Lead-Qualität`;
+
+  if(!filtered.length){
+    list.innerHTML = `<div class="empty">
+      <div class="empty-icon">🔍</div>
+      <h3>Keine Leads in dieser Kategorie</h3>
+      <p>Starte eine neue Suche oder wähle einen anderen Filter.</p>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map((l,i)=> buildCard(l,i)).join('');
+}
+
+function buildCard(l, i){
+  const cls = l.rec_class || 'none';
+  const badgeMap = { top:'Top Lead', good:'Guter Lead', possible:'Möglicher Lead', none:'Kein Lead' };
+  const badgeLabel = badgeMap[cls] || 'Unbekannt';
+
+  const scoreColor = l.website_score < 20 ? 'bad' : l.website_score < 40 ? 'warn' : 'ok';
+
+  // Website: klickbarer Link
+  let websiteCell;
+  if(l.website){
+    const displayUrl = l.website.replace(/^https?:\/\//,'').replace(/\/$/,'');
+    const truncated  = displayUrl.length>40 ? displayUrl.slice(0,40)+'…' : displayUrl;
+    websiteCell = `<span class="mval link"><a href="${l.website}" target="_blank" rel="noopener" title="${l.website}">${truncated}</a></span>`;
+  } else {
+    websiteCell = `<span class="mval bad">— keine Website —</span>`;
+  }
+
+  // Telefon: klickbar
+  let phoneCell;
+  if(l.phone){
+    const cleanPhone = l.phone.replace(/\s/g,'');
+    phoneCell = `<span class="mval link"><a href="tel:${cleanPhone}" title="Anrufen">${l.phone}</a></span>`;
+  } else {
+    phoneCell = `<span class="mval" style="color:var(--text2)">—</span>`;
+  }
+
+  // SSL-Indikator
+  const sslColor = l.has_ssl ? 'ok' : 'bad';
+  const sslLabel = l.has_ssl ? 'Ja ✓' : 'Nein ✗';
+
+  // Ladezeit
+  const ltColor = !l.load_time ? '' : l.load_time > 5 ? 'bad' : l.load_time > 3 ? 'warn' : 'ok';
+  const ltLabel = l.load_time ? l.load_time+'s' : '—';
+
+  // Issues-Liste
+  const issuesHtml = (l.issues && l.issues.length)
+    ? l.issues.map(iss=>`<li>${iss}</li>`).join('')
+    : `<li class="ok">Keine Probleme gefunden</li>`;
+
+  // Outreach
+  const outreachText = l.outreach_subject
+    ? `Betreff: ${l.outreach_subject}\n\n${l.outreach_body}`
+    : '(Kein Outreach-Text – kein qualifizierter Lead)';
+
+  return `
+<div class="lcard ${cls}" id="card-${i}">
+  <div class="lcard-top" onclick="toggleDetail(${i})">
+    <div class="lbar"></div>
+    <div class="lmain">
+      <div class="lname">${l.name}</div>
+      <div class="lmeta">
+        <div class="mitem">
+          <span class="mkey">Website</span>
+          ${websiteCell}
+        </div>
+        <div class="mitem">
+          <span class="mkey">Telefon</span>
+          ${phoneCell}
+        </div>
+        <div class="mitem">
+          <span class="mkey">Adresse</span>
+          <span class="mval" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${l.address||''}">${l.address || '—'}</span>
+        </div>
+        <div class="mitem">
+          <span class="mkey">Ladezeit</span>
+          <span class="mval ${ltColor}">${ltLabel}</span>
+        </div>
+        <div class="mitem">
+          <span class="mkey">HTTPS</span>
+          <span class="mval ${sslColor}">${sslLabel}</span>
+        </div>
+        <div class="mitem">
+          <span class="mkey">Status</span>
+          <span class="badge ${cls}">${badgeLabel}</span>
+        </div>
+      </div>
+    </div>
+    <div class="lscore">
+      <div class="snum ${scoreColor}">${l.website_score}</div>
+      <div class="slbl">Score</div>
+    </div>
+  </div>
+  <div class="ldetail" id="detail-${i}">
+    <div class="detail-cols">
+      <div class="dbox">
+        <div class="dbox-title">⚠ Gefundene Probleme</div>
+        <ul class="issues-ul">${issuesHtml}</ul>
+        <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+          <div><span style="font-family:'DM Mono',monospace;font-size:8px;text-transform:uppercase;color:var(--text2)">Quelle</span><br>
+            <span style="font-family:'DM Mono',monospace;font-size:11px">${l.source||'—'}</span></div>
+          <div><span style="font-family:'DM Mono',monospace;font-size:8px;text-transform:uppercase;color:var(--text2)">Gescrapt</span><br>
+            <span style="font-family:'DM Mono',monospace;font-size:11px">${l.scraped_at||'—'}</span></div>
+          <div><span style="font-family:'DM Mono',monospace;font-size:8px;text-transform:uppercase;color:var(--text2)">HTTP Status</span><br>
+            <span style="font-family:'DM Mono',monospace;font-size:11px">${l.status_code||'—'}</span></div>
+          <div><span style="font-family:'DM Mono',monospace;font-size:8px;text-transform:uppercase;color:var(--text2)">Seitengröße</span><br>
+            <span style="font-family:'DM Mono',monospace;font-size:11px">${l.page_size_kb ? l.page_size_kb+' KB' : '—'}</span></div>
+        </div>
+      </div>
+      <div class="dbox">
+        <div class="dbox-title">
+          📧 Cold Outreach
+          <button class="copy-btn" onclick="copyText(event,'outreach-${i}')">Kopieren</button>
+        </div>
+        <pre class="outreach-text" id="outreach-${i}">${outreachText}</pre>
+      </div>
+    </div>
+  </div>
+</div>`;
+}
+
+function toggleDetail(i){
+  document.getElementById('detail-'+i).classList.toggle('open');
+}
+
+function copyText(e, id){
+  e.stopPropagation();
+  const text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(()=>{
+    const btn = e.target;
+    const orig = btn.textContent;
+    btn.textContent='✓ Kopiert!';
+    btn.style.color='var(--green)';
+    setTimeout(()=>{ btn.textContent=orig; btn.style.color=''; },2000);
+  });
+}
+
+/* ── CSV EXPORT ── */
+function exportCSV(){
+  const headers = ['Name','Website','Telefon','Adresse','Quelle','Score','Empfehlung','Probleme','HTTPS','Ladezeit(s)','Erreichbar','Mobile','Outreach Betreff','Outreach Text','Gescrapt am'];
+  const rows = allLeads.map(l=>[
+    l.name, l.website, l.phone, l.address, l.source,
+    l.website_score, l.recommendation,
+    (l.issues||[]).join(' | '),
+    l.has_ssl?'Ja':'Nein',
+    l.load_time||'',
+    l.is_reachable?'Ja':'Nein',
+    l.is_mobile?'Ja':'Nein',
+    l.outreach_subject,
+    (l.outreach_body||'').replace(/\n/g,' '),
+    l.scraped_at
+  ]);
+  const csv = [headers,...rows].map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `leads_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+/* Enter-Taste */
+document.addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
+</script>
+</body>
+</html>
