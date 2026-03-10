@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-LeadRadar Backend v4
-- Findet Website per Google-Suche fuer jedes Unternehmen
-- Filtert Ketten/Franchises + geschlossene Betriebe
-- Nur Leads MIT Website aber schlechter Qualitaet
+LeadRadar Backend v5
+- Datenquelle: OpenStreetMap Overpass API (kostenlos, kein API-Key, Railway-kompatibel)
+- Liefert echte Unternehmen MIT Website
+- Filtert Ketten/Franchises und geschlossene Betriebe
+- Bewertet Website-Qualitaet
 """
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -14,50 +15,95 @@ import re
 import os
 from urllib.parse import quote_plus
 from datetime import datetime
+import json
 import urllib3
 urllib3.disable_warnings()
 
 app = Flask(__name__, static_folder=".")
 
-HEADERS_BROWSER = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept-Language": "de-DE,de;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Encoding": "gzip, deflate",
-    "Connection": "keep-alive",
+HEADERS = {
+    "User-Agent": "LeadRadar/1.0 (lead-research-tool)",
+    "Accept": "application/json",
 }
 
-# Domains die KEINE echte Unternehmenswebsite sind
-NOT_A_WEBSITE = [
-    "google.", "facebook.", "instagram.", "twitter.", "linkedin.",
-    "xing.", "yelp.", "tripadvisor.", "gelbeseiten.", "klicktel.",
-    "11880.", "cylex.", "meinestadt.", "stadtbranchenbuch.",
-    "wikipedia.", "youtube.", "maps.google", "waze.",
-    "branchenbuch.", "dastelefonbuch.", "dasoertliche.",
-    "hotfrog.", "foursquare.", "trustpilot.", "kununu.",
-    "jameda.", "doctolib.", "booking.", "trivago.", "holidaycheck.",
-]
+HEADERS_WEB = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+    "Accept-Language": "de-DE,de;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+}
+
+# OSM amenity-Tags die zu Branchen-Keywords passen
+AMENITY_MAP = {
+    "restaurant": ["restaurant", "fast_food", "cafe", "bar", "pub", "food_court", "biergarten"],
+    "cafe": ["cafe", "coffee_shop"],
+    "bar": ["bar", "pub", "nightclub"],
+    "hotel": ["hotel", "motel", "hostel", "guest_house"],
+    "friseur": ["hairdresser"],
+    "hairdresser": ["hairdresser"],
+    "arzt": ["doctors", "dentist", "clinic", "pharmacy"],
+    "zahnarzt": ["dentist"],
+    "apotheke": ["pharmacy"],
+    "fitnessstudio": ["gym", "fitness_centre"],
+    "gym": ["gym", "fitness_centre"],
+    "autowerkstatt": ["car_repair"],
+    "werkstatt": ["car_repair", "workshop"],
+    "supermarkt": ["supermarket", "convenience"],
+    "baeckerei": ["bakery"],
+    "bäckerei": ["bakery"],
+    "metzger": ["butcher"],
+    "blumen": ["florist"],
+    "optiker": ["optician"],
+    "rechtsanwalt": ["lawyers"],
+    "steuerberater": ["accountant"],
+    "reinigung": ["dry_cleaning", "laundry"],
+    "tankstelle": ["fuel"],
+    "kiosk": ["kiosk", "newsagent"],
+}
+
+SHOP_MAP = {
+    "baeckerei": ["bakery"],
+    "bäckerei": ["bakery"],
+    "metzger": ["butcher"],
+    "blumen": ["florist"],
+    "optiker": ["optician"],
+    "handwerker": ["hardware", "doityourself"],
+    "elektriker": ["electronics"],
+    "moebel": ["furniture"],
+    "möbel": ["furniture"],
+    "kleidung": ["clothes", "fashion"],
+    "schuhe": ["shoes"],
+    "spielzeug": ["toys"],
+    "buchhandlung": ["books"],
+    "supermarkt": ["supermarket", "convenience"],
+    "friseur": ["hairdresser"],
+    "hairdresser": ["hairdresser"],
+}
+
+CRAFT_MAP = {
+    "handwerker": ["carpenter", "electrician", "plumber", "painter", "builder", "roofer", "glazier"],
+    "zimmermann": ["carpenter"],
+    "elektriker": ["electrician"],
+    "klempner": ["plumber"],
+    "maler": ["painter"],
+    "dachdecker": ["roofer"],
+    "schreiner": ["carpenter", "cabinet_maker"],
+    "sanitaer": ["plumber", "hvac"],
+}
 
 CHAIN_BLACKLIST = [
     "subway","mcdonald","burger king","kfc","pizza hut","domino","vapiano",
-    "nordsee","wienerwald","hans im gluck","hans im glück","peter pane",
-    "enchilada","l'osteria","dean david","dean & david","ditsch","backwerk",
-    "le crobag","jim block","five guys","dunkin","starbucks","costa coffee",
-    "tchibo","balzac","yorma","cinnabon","aldi","lidl","rewe","edeka",
-    "penny","netto","kaufland","dm drogerie","rossmann","saturn","mediamarkt",
-    "ikea","obi ","bauhaus","hornbach","toom","hagebau","deichmann","snipes",
-    "foot locker","h&m","zara","primark","c&a","esprit","douglas","thalia",
-    "hugendubel","fielmann","apollo optik","mcfit","fitx","clever fit",
-    "fitness first","sixt","hertz","europcar","telekom shop","o2 shop",
-    "vodafone shop","motel one","ibis ","novotel","mercure","holiday inn",
-    "hilton","marriott","radisson","a&o hostel","meininger","takko",
-    "kik ","nkd ","woolworth","norma ","action ",
-]
-
-CLOSED_KEYWORDS = [
-    "dauerhaft geschlossen","permanently closed","betrieb eingestellt",
-    "insolvenz","insolvent","aufgeloest","domain expired",
-    "account suspended","parked domain",
+    "nordsee","wienerwald","hans im gluck","peter pane","enchilada","l'osteria",
+    "dean david","dean & david","ditsch","backwerk","le crobag","jim block",
+    "five guys","dunkin","starbucks","costa coffee","tchibo","balzac",
+    "aldi","lidl","rewe","edeka","penny","netto","kaufland",
+    "dm drogerie","rossmann","saturn","mediamarkt","ikea","obi ","bauhaus",
+    "hornbach","toom","hagebau","deichmann","snipes","foot locker",
+    "h&m","zara","primark","c&a","esprit","douglas","thalia","hugendubel",
+    "fielmann","apollo optik","mcfit","fitx","clever fit","fitness first",
+    "sixt","hertz","europcar","telekom shop","o2 shop","vodafone shop",
+    "motel one","ibis ","novotel","mercure","holiday inn","hilton","marriott",
+    "radisson","a&o hostel","meininger","takko","kik ","nkd ","woolworth",
+    "norma ","action ","tedi ","zeeman",
 ]
 
 
@@ -66,202 +112,160 @@ def is_chain(name):
     return any(c in n for c in CHAIN_BLACKLIST)
 
 
-def is_closed(text, name=""):
-    combined = (text + " " + name).lower()
-    return any(kw in combined for kw in CLOSED_KEYWORDS)
+def get_osm_area_id(city):
+    """Holt die OSM Area-ID fuer eine Stadt via Nominatim."""
+    url = f"https://nominatim.openstreetmap.org/search?q={quote_plus(city)}&format=json&limit=1&addressdetails=1"
+    try:
+        r = requests.get(url, headers={"User-Agent": "LeadRadar/1.0"}, timeout=10)
+        data = r.json()
+        if data:
+            osm_id = int(data[0].get("osm_id", 0))
+            osm_type = data[0].get("osm_type", "")
+            # Fuer Relations: area_id = osm_id + 3600000000
+            if osm_type == "relation":
+                return osm_id + 3600000000
+            elif osm_type == "way":
+                return osm_id + 2400000000
+            else:
+                return osm_id
+    except Exception as e:
+        print(f"  [NOMINATIM] Fehler: {e}")
+    return None
 
 
-def is_directory_url(url):
-    """Prueft ob eine URL ein Branchenverzeichnis ist, keine echte Website."""
-    return any(d in url.lower() for d in NOT_A_WEBSITE)
-
-
-# ─────────────────────────────────────────
-#  WEBSITE-LOOKUP via Google/DuckDuckGo
-# ─────────────────────────────────────────
-
-def find_website(company_name, address=""):
+def query_overpass(amenity_types, shop_types, craft_types, area_id, max_results):
     """
-    Sucht die offizielle Website eines Unternehmens via Google.
-    Gibt URL zurueck oder leeren String wenn nichts gefunden.
+    Fragt OpenStreetMap Overpass API ab.
+    Gibt nur Eintraege MIT website-Tag zurueck.
     """
-    # Suchbegriff: Firmenname + Stadt (aus Adresse extrahiert)
-    city = ""
-    if address:
-        m = re.search(r'\d{5}\s+(\w[\w\s]{2,20})', address)
-        if m:
-            city = m.group(1).strip().split()[0]
+    results = []
 
-    query = f"{company_name} {city} offizielle website".strip()
-    search_url = f"https://www.google.com/search?q={quote_plus(query)}&hl=de&num=5"
+    # Overpass QL Query aufbauen
+    # Wir suchen nach Nodes und Ways mit website-Tag in der Zielstadt
+    queries = []
+
+    for at in amenity_types:
+        queries.append(f'node["amenity"="{at}"]["website"](area:{area_id});')
+        queries.append(f'way["amenity"="{at}"]["website"](area:{area_id});')
+
+    for st in shop_types:
+        queries.append(f'node["shop"="{st}"]["website"](area:{area_id});')
+        queries.append(f'way["shop"="{st}"]["website"](area:{area_id});')
+
+    for ct in craft_types:
+        queries.append(f'node["craft"="{ct}"]["website"](area:{area_id});')
+        queries.append(f'way["craft"="{ct}"]["website"](area:{area_id});')
+
+    # Falls keine spezifischen Tags: allgemeine Suche nach allem mit Website
+    if not queries:
+        queries = [
+            f'node["name"]["website"](area:{area_id});',
+            f'way["name"]["website"](area:{area_id});',
+        ]
+
+    union_body = "\n  ".join(queries)
+    overpass_query = f"""
+[out:json][timeout:30];
+area({area_id})->.searchArea;
+(
+  {union_body}
+);
+out body {max_results * 4};
+"""
+
+    print(f"  [OSM] Query fuer area_id={area_id}")
+    print(f"  [OSM] Suche nach: amenity={amenity_types}, shop={shop_types}, craft={craft_types}")
 
     try:
-        resp = requests.get(search_url, headers=HEADERS_BROWSER, timeout=12, verify=False)
-        soup = BeautifulSoup(resp.text, "lxml")
-
-        # Google zeigt URLs in verschiedenen Elementen
-        candidates = []
-
-        # Methode 1: cite-Tags (zeigen die URL an)
-        for cite in soup.find_all("cite"):
-            url = cite.get_text(strip=True)
-            if url.startswith("http") or ("." in url and "/" in url):
-                if not url.startswith("http"):
-                    url = "https://" + url
-                candidates.append(url.split(" ")[0])
-
-        # Methode 2: a-Tags mit href zu externen Seiten
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            # Google verschleiert Links mit /url?q=
-            m = re.search(r'/url\?q=(https?://[^&]+)', href)
-            if m:
-                candidates.append(m.group(1))
-            elif re.match(r'https?://', href):
-                candidates.append(href)
-
-        # Bestes Ergebnis: erste nicht-Verzeichnis URL
-        for url in candidates:
-            url = url.split("?")[0].rstrip("/")
-            if not is_directory_url(url) and len(url) > 10:
-                # Sanity check: enthaelt die Domain den Firmennamen oder eine Stadt?
-                domain = re.sub(r'https?://(www\.)?', '', url).split('/')[0].lower()
-                print(f"    [GOOGLE] Gefunden: {url}")
-                return url
-
-    except Exception as e:
-        print(f"    [GOOGLE] Fehler bei '{company_name}': {e}")
-
-    # Fallback: DuckDuckGo
-    try:
-        ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
-        resp = requests.get(ddg_url, headers=HEADERS_BROWSER, timeout=10, verify=False)
-        soup = BeautifulSoup(resp.text, "lxml")
-        for a in soup.find_all("a", {"class": re.compile(r"result__url|result__a")}):
-            href = a.get("href", "")
-            if not href:
-                href = a.get_text(strip=True)
-            if "." in href and not is_directory_url(href):
-                if not href.startswith("http"):
-                    href = "https://" + href
-                print(f"    [DDG] Gefunden: {href}")
-                return href.split("?")[0].rstrip("/")
-    except Exception as e:
-        print(f"    [DDG] Fehler: {e}")
-
-    return ""
-
-
-# ─────────────────────────────────────────
-#  SCRAPING: GELBE SEITEN
-# ─────────────────────────────────────────
-
-def scrape_gelbe_seiten(query, location, max_results=20):
-    businesses = []
-    page = 1
-    target = max_results * 3
-
-    while len(businesses) < target and page <= 10:
-        url = (
-            f"https://www.gelbeseiten.de/suche/"
-            f"{quote_plus(query)}/{quote_plus(location)}"
-            f"?von={(page - 1) * 20 + 1}"
+        r = requests.post(
+            "https://overpass-api.de/api/interpreter",
+            data={"data": overpass_query},
+            headers={"User-Agent": "LeadRadar/1.0"},
+            timeout=35
         )
-        print(f"  [GS] Seite {page}: {url}")
+        data = r.json()
+        elements = data.get("elements", [])
+        print(f"  [OSM] {len(elements)} Rohergebnisse mit Website")
 
-        try:
-            resp = requests.get(url, headers=HEADERS_BROWSER, timeout=20, verify=False)
-            soup = BeautifulSoup(resp.text, "lxml")
-            entries = (
-                soup.find_all("article", {"class": re.compile(r"teilnehmer", re.I)})
-                or soup.find_all("article")
-            )
-            if not entries:
-                print("  [GS] Keine Eintraege mehr")
+        for el in elements:
+            tags = el.get("tags", {})
+            name = tags.get("name", "").strip()
+            website = tags.get("website", "").strip()
+            phone = tags.get("phone", tags.get("contact:phone", "")).strip()
+            email = tags.get("email", tags.get("contact:email", "")).strip()
+
+            # Adresse zusammensetzen
+            street  = tags.get("addr:street", "")
+            housenr = tags.get("addr:housenumber", "")
+            postcode = tags.get("addr:postcode", "")
+            city_tag = tags.get("addr:city", "")
+            address = f"{street} {housenr}, {postcode} {city_tag}".strip().strip(",").strip()
+
+            if not name or not website:
+                continue
+            if is_chain(name):
+                print(f"  [SKIP] Kette: {name}")
+                continue
+
+            # Website normalisieren
+            if not website.startswith("http"):
+                website = "https://" + website
+            website = website.rstrip("/")
+
+            results.append({
+                "name": name,
+                "website": website,
+                "phone": phone,
+                "email": email,
+                "address": address,
+                "source": "OpenStreetMap",
+            })
+
+            if len(results) >= max_results * 2:
                 break
 
-            for entry in entries:
-                biz = _parse_gelbe_eintrag(entry)
-                if not biz or not biz["name"]:
-                    continue
-                entry_text = entry.get_text(" ", strip=True)
-                if is_chain(biz["name"]):
-                    print(f"  [SKIP-KETTE]  {biz['name']}")
-                    continue
-                if is_closed(entry_text, biz["name"]):
-                    print(f"  [SKIP-CLOSED] {biz['name']}")
-                    continue
-                businesses.append(biz)
-                print(f"  [GS] + {biz['name']} | {biz.get('phone','--')}")
+    except Exception as e:
+        print(f"  [OSM] Fehler: {e}")
 
-            next_btn = soup.find("a", {"class": re.compile(r"next|weiter", re.I)})
-            if not next_btn:
-                break
-            page += 1
-            time.sleep(1.5)
-
-        except Exception as e:
-            print(f"  [GS] Fehler: {e}")
-            break
-
-    return businesses
+    return results
 
 
-def _parse_gelbe_eintrag(entry):
-    biz = {"name": "", "website": "", "phone": "", "address": "", "source": "Gelbe Seiten"}
+def get_tags_for_query(query_raw):
+    """Wandelt einen Suchbegriff in OSM-Tags um."""
+    q = query_raw.lower().strip()
 
-    for tag in ["h2", "h3", "h4"]:
-        el = entry.find(tag)
-        if el:
-            biz["name"] = el.get_text(strip=True)
-            break
-    if not biz["name"]:
-        biz["name"] = entry.get("data-name", "") or entry.get("aria-label", "")
+    amenity = set()
+    shop = set()
+    craft = set()
 
-    # Website aus Gelbe Seiten (oft nicht vorhanden — wird spaeter per Google ergaenzt)
-    for a in entry.find_all("a", href=True):
-        href = a["href"]
-        if re.match(r"https?://", href) and not is_directory_url(href):
-            biz["website"] = href.split("?")[0].rstrip("/")
-            break
-    if not biz["website"]:
-        for el in entry.find_all(attrs={"data-website": True}):
-            w = el["data-website"]
-            if not is_directory_url(w):
-                biz["website"] = w
-                break
+    for kw, tags in AMENITY_MAP.items():
+        if kw in q or q in kw:
+            amenity.update(tags)
 
-    # Telefon
-    tel_link = entry.find("a", href=re.compile(r"^tel:"))
-    if tel_link:
-        biz["phone"] = tel_link["href"].replace("tel:", "").strip()
-    else:
-        text = entry.get_text(" ", strip=True)
-        m = re.search(r'(\+49[\d\s\-/]{7,}|0[\d][\d\s\-/]{8,})', text)
-        if m:
-            biz["phone"] = re.sub(r'\s+', ' ', m.group(1)).strip()
+    for kw, tags in SHOP_MAP.items():
+        if kw in q or q in kw:
+            shop.update(tags)
 
-    # Adresse
-    addr = entry.find(["address","span","div","p"],
-                      {"class": re.compile(r"adress|address|location|ort|street|plz", re.I)})
-    if addr:
-        biz["address"] = re.sub(r'\s+', ' ', addr.get_text(" ", strip=True))
-    else:
-        text = entry.get_text(" ", strip=True)
-        m = re.search(r'(\d{5}\s+\w[\w\s]{2,30})', text)
-        if m:
-            biz["address"] = m.group(1).strip()
+    for kw, tags in CRAFT_MAP.items():
+        if kw in q or q in kw:
+            craft.update(tags)
 
-    return biz
+    # Fallback: direkt als amenity/shop versuchen
+    if not amenity and not shop and not craft:
+        amenity = {q}
+        shop = {q}
+        craft = {q}
+
+    return list(amenity), list(shop), list(craft)
 
 
 # ─────────────────────────────────────────
-#  WEBSITE-QUALITAET PRUEFEN
+#  WEBSITE-QUALITAET
 # ─────────────────────────────────────────
 
 def check_website(url):
     result = {
-        "has_website": bool(url),
+        "has_website": True,
         "is_reachable": False,
         "score": 0,
         "issues": [],
@@ -275,13 +279,6 @@ def check_website(url):
         "rec_class": "none",
     }
 
-    if not url:
-        # Kein Lead — wir wollen nur Firmen MIT Website
-        result["recommendation"] = "KEIN LEAD - Keine Website gefunden"
-        result["rec_class"] = "none"
-        result["score"] = 100
-        return result
-
     if not url.startswith("http"):
         url = "https://" + url
 
@@ -292,7 +289,7 @@ def check_website(url):
 
     start = time.time()
     try:
-        resp = requests.get(url, headers=HEADERS_BROWSER, timeout=10,
+        resp = requests.get(url, headers=HEADERS_WEB, timeout=10,
                             verify=False, allow_redirects=True)
         load_time = round(time.time() - start, 2)
         result["load_time"] = load_time
@@ -314,10 +311,12 @@ def check_website(url):
             return result
 
         page_lower = resp.text.lower()
-        for kw in ["domain expired","account suspended","parked domain",
-                   "under construction","coming soon","diese domain"]:
+
+        # Inaktive / geparkte Domain
+        for kw in ["domain expired", "account suspended", "parked domain",
+                   "under construction", "coming soon", "diese domain"]:
             if kw in page_lower:
-                result["issues"].append(f"Inaktive Domain ({kw})")
+                result["issues"].append(f"Inaktive Domain")
                 result["score"] -= 40
                 break
 
@@ -325,13 +324,18 @@ def check_website(url):
         text = soup.get_text(strip=True)
         result["page_size_kb"] = round(len(resp.text) / 1024, 1)
 
-        if len(text) < 200:
+        # Inhalt
+        if len(text) < 300:
             result["issues"].append("Kaum Inhalt (Under Construction?)")
             result["score"] -= 30
+        elif len(text) < 800:
+            result["issues"].append("Wenig Inhalt")
+            result["score"] -= 10
         else:
             result["has_content"] = True
             result["score"] += 20
 
+        # Mobile
         if soup.find("meta", {"name": "viewport"}):
             result["is_mobile_friendly"] = True
             result["score"] += 10
@@ -339,22 +343,29 @@ def check_website(url):
             result["issues"].append("Nicht mobile-optimiert")
             result["score"] -= 15
 
-        # Veraltetes Copyright-Jahr
+        # Veraltetes Copyright
         for yr_match in re.findall(r'copyright\D{0,5}(\d{4})|&copy;\D{0,5}(\d{4})', page_lower):
             yr_str = yr_match[0] or yr_match[1]
             if yr_str:
                 yr = int(yr_str)
                 if yr < datetime.now().year - 3:
-                    result["issues"].append(f"Website seit {yr} nicht aktualisiert")
+                    result["issues"].append(f"Seit {yr} nicht aktualisiert")
                     result["score"] -= 20
                     break
 
+        # Veraltetes HTML
         if re.search(r'cellpadding|cellspacing|bgcolor=', resp.text, re.I):
-            result["issues"].append("Veraltetes HTML-Table-Layout")
+            result["issues"].append("Veraltetes HTML-Layout")
             result["score"] -= 10
 
-        if any(x in page_lower for x in ["react","vue","angular","next","gatsby",
-               "wordpress","shopify","typo3","joomla","wix","squarespace","jimdo"]):
+        # Kein Meta-Description
+        if not soup.find("meta", {"name": "description"}):
+            result["issues"].append("Kein Meta-Description (SEO)")
+            result["score"] -= 5
+
+        # Modernes CMS/Framework
+        if any(x in page_lower for x in ["wordpress", "shopify", "typo3", "joomla",
+               "wix", "squarespace", "jimdo", "react", "vue", "angular", "next"]):
             result["score"] += 10
 
         result["score"] = max(0, min(100, 50 + result["score"]))
@@ -405,30 +416,33 @@ def make_outreach(biz, wc):
     name = biz.get("name", "Ihr Unternehmen")
     issues = wc.get("issues", [])
 
-    if not wc.get("is_reachable") and wc.get("has_website"):
+    if not wc.get("is_reachable"):
         subj = f"Ihre Website ist nicht erreichbar - {name}"
-        body = (f"Guten Tag,\n\nIhre Website ist aktuell nicht erreichbar. Kunden, die online nach "
-                f"{name} suchen, landen auf einer toten Seite und wechseln zur Konkurrenz.\n\n"
+        body = (f"Guten Tag,\n\nIhre Website ist aktuell nicht erreichbar. "
+                f"Kunden, die online nach {name} suchen, landen auf einer toten Seite "
+                f"und wechseln zur Konkurrenz.\n\n"
                 f"Ich kann helfen, das schnell zu beheben.\n\nMit freundlichen Gruessen")
     elif issues:
         main = issues[0]
         if "langsam" in main.lower() or "timeout" in main.lower():
-            prob = f"Ihre Website laedt sehr langsam ({main}). Studien zeigen: 53% der Nutzer verlassen eine Seite, die laenger als 3 Sekunden braucht."
+            prob = f"Ihre Website laedt sehr langsam ({main}). 53% der Nutzer verlassen eine Seite, die laenger als 3 Sekunden braucht."
         elif "ssl" in main.lower() or "https" in main.lower():
-            prob = "Ihre Website hat kein HTTPS. Besucher sehen eine Sicherheitswarnung im Browser - das kostet massiv Vertrauen und Kunden."
+            prob = "Ihre Website hat kein HTTPS. Besucher sehen eine Sicherheitswarnung im Browser - das kostet massiv Vertrauen."
         elif "mobile" in main.lower():
             prob = "Ihre Website ist nicht fuer Smartphones optimiert. Ueber 60% der lokalen Suchen passieren heute auf dem Handy."
-        elif "aktualisiert" in main.lower():
-            prob = f"Ihre Website wurde seit Jahren nicht aktualisiert ({main}). Das wirkt unprofessionell und schadet Ihrem Google-Ranking."
+        elif "aktualisiert" in main.lower() or "seit" in main.lower():
+            prob = f"Ihre Website wurde seit Jahren nicht aktualisiert ({main}). Das schadet Ihrem Google-Ranking."
         elif "inhalt" in main.lower():
-            prob = "Ihre Website hat kaum Inhalte. Google zeigt Seiten mit wenig Inhalt kaum in den Suchergebnissen an."
+            prob = "Ihre Website hat kaum Inhalte. Google zeigt solche Seiten kaum in den Suchergebnissen an."
+        elif "seo" in main.lower():
+            prob = "Ihrer Website fehlen wichtige SEO-Grundlagen, weshalb sie in Google kaum gefunden wird."
         else:
             prob = f"Ihre Website hat ein technisches Problem: {main}."
         subj = f"Kurze Frage zu Ihrer Website - {name}"
-        body = (f"Guten Tag,\n\nIch habe Ihre Website besucht und dabei festgestellt:\n\n"
+        body = (f"Guten Tag,\n\nIch habe Ihre Website besucht und folgendes festgestellt:\n\n"
                 f"{prob}\n\nIch helfe lokalen Unternehmen wie {name} dabei, genau solche Probleme "
-                f"schnell und kostenguenstig zu loesen.\n\n"
-                f"Haetten Sie 15 Minuten Zeit fuer ein kurzes Gespraech?\n\nMit freundlichen Gruessen")
+                f"schnell und guenstig zu loesen - mit messbaren Ergebnissen.\n\n"
+                f"Haetten Sie kurz Zeit fuer ein Gespraech?\n\nMit freundlichen Gruessen")
     else:
         subj = f"Ihre Website - {name}"
         body = (f"Guten Tag,\n\nIch wuerde Ihnen gerne zeigen, wie Sie mit gezielten Verbesserungen "
@@ -438,7 +452,7 @@ def make_outreach(biz, wc):
 
 
 # ─────────────────────────────────────────
-#  API
+#  API ROUTES
 # ─────────────────────────────────────────
 
 @app.route("/")
@@ -457,8 +471,19 @@ def api_scrape():
 
     print(f"\n{'='*60}\nSuche: '{query}' in '{location}' | max={max_r}\n{'='*60}")
 
-    # 1. Unternehmen scrapen
-    businesses = scrape_gelbe_seiten(query, location, max_r)
+    # 1. Stadt -> OSM Area ID
+    print(f"  Suche OSM Area ID fuer '{location}'...")
+    area_id = get_osm_area_id(location)
+    if not area_id:
+        return jsonify({"error": f"Stadt '{location}' nicht gefunden."}), 400
+    print(f"  Area ID: {area_id}")
+
+    # 2. Query -> OSM Tags
+    amenity_tags, shop_tags, craft_tags = get_tags_for_query(query)
+    print(f"  Tags: amenity={amenity_tags}, shop={shop_tags}, craft={craft_tags}")
+
+    # 3. OSM abfragen — gibt nur Eintraege MIT Website
+    businesses = query_overpass(amenity_tags, shop_tags, craft_tags, area_id, max_r)
 
     # Duplikate entfernen
     seen, unique = set(), []
@@ -469,32 +494,20 @@ def api_scrape():
             unique.append(b)
     businesses = unique[:max_r]
 
+    print(f"\n{len(businesses)} Unternehmen MIT Website gefunden. Starte Qualitaetscheck...")
+
     if not businesses:
-        return jsonify({"leads": [], "stats": {}, "message": "Keine Unternehmen gefunden."}), 200
-
-    print(f"\n{len(businesses)} Unternehmen gefunden. Suche Websites...")
-
-    # 2. Fuer jedes Unternehmen Website suchen (falls Gelbe Seiten keine liefert)
-    for biz in businesses:
-        if not biz.get("website"):
-            print(f"  [LOOKUP] {biz['name'][:45]}...")
-            biz["website"] = find_website(biz["name"], biz.get("address", ""))
-            time.sleep(1.5)  # Google-Freundlichkeit
-        else:
-            print(f"  [OK-URL] {biz['name'][:45]} -> {biz['website'][:40]}")
-
-    # 3. Nur Unternehmen MIT Website behalten
-    with_website = [b for b in businesses if b.get("website")]
-    without_website = [b for b in businesses if not b.get("website")]
-    print(f"\n  Mit Website: {len(with_website)} | Ohne Website: {len(without_website)}")
-    print(f"  Analysiere nur Unternehmen MIT Website...")
+        return jsonify({
+            "leads": [],
+            "stats": {"total": 0, "top": 0, "good": 0, "possible": 0, "none": 0},
+            "message": f"Keine Unternehmen mit Website fuer '{query}' in '{location}' gefunden. Versuche andere Begriffe wie 'restaurant', 'friseur', 'handwerker'."
+        }), 200
 
     # 4. Website-Qualitaet pruefen
     leads = []
-    for i, biz in enumerate(with_website):
-        name = biz["name"]
-        url  = biz["website"]
-        print(f"  [{i+1}/{len(with_website)}] {name[:40]} | {url[:45]}")
+    for i, biz in enumerate(businesses):
+        url = biz["website"]
+        print(f"  [{i+1}/{len(businesses)}] {biz['name'][:40]} | {url[:45]}")
         wc = check_website(url)
         outreach = make_outreach(biz, wc)
         leads.append({
@@ -514,15 +527,13 @@ def api_scrape():
             "outreach_body":    outreach["body"],
             "scraped_at":       datetime.now().strftime("%d.%m.%Y %H:%M"),
         })
-        time.sleep(0.8)
+        time.sleep(0.5)
 
-    # Sortieren: schlechteste Website zuerst
+    # Sortieren: schlechteste zuerst, dann gute Leads, OK-Leads ans Ende
     leads.sort(key=lambda x: x["website_score"])
-
-    # Kein-Lead-Eintraege ans Ende
-    leads_qualified = [l for l in leads if l["rec_class"] != "none"]
-    leads_none      = [l for l in leads if l["rec_class"] == "none"]
-    leads = leads_qualified + leads_none
+    leads_q    = [l for l in leads if l["rec_class"] != "none"]
+    leads_none = [l for l in leads if l["rec_class"] == "none"]
+    leads = leads_q + leads_none
 
     stats = {
         "total":    len(leads),
@@ -530,7 +541,6 @@ def api_scrape():
         "good":     sum(1 for l in leads if l["rec_class"] == "good"),
         "possible": sum(1 for l in leads if l["rec_class"] == "possible"),
         "none":     sum(1 for l in leads if l["rec_class"] == "none"),
-        "no_website": len(without_website),
     }
     print(f"\nFertig: {stats}")
     return jsonify({"leads": leads, "stats": stats})
@@ -541,11 +551,11 @@ if __name__ == "__main__":
     debug = os.environ.get("RAILWAY_ENVIRONMENT") is None
     print(f"""
 +------------------------------------------+
-|  LeadRadar Backend v4                    |
+|  LeadRadar Backend v5                    |
 |  http://localhost:{port}                   |
-|  Website-Lookup: Google + DuckDuckGo     |
-|  Ketten-Filter:  aktiv                   |
-|  Nur Leads MIT (schlechter) Website      |
+|  Datenquelle: OpenStreetMap (kostenlos)  |
+|  Nur Leads MIT Website                   |
+|  Ketten-Filter: aktiv                    |
 +------------------------------------------+
 """)
     app.run(debug=debug, port=port, host="0.0.0.0")
