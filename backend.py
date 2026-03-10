@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-LeadRadar Backend v3
-- Filtert Ketten/Franchises heraus
-- Filtert geschlossene Betriebe heraus
-- Priorisiert schlechte Websites über keine Website
+LeadRadar Backend v4
+- Findet Website per Google-Suche fuer jedes Unternehmen
+- Filtert Ketten/Franchises + geschlossene Betriebe
+- Nur Leads MIT Website aber schlechter Qualitaet
 """
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -19,64 +19,149 @@ urllib3.disable_warnings()
 
 app = Flask(__name__, static_folder=".")
 
-HEADERS = {
+HEADERS_BROWSER = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept-Language": "de-DE,de;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
     "Connection": "keep-alive",
 }
 
-# Bekannte Ketten und Franchises
+# Domains die KEINE echte Unternehmenswebsite sind
+NOT_A_WEBSITE = [
+    "google.", "facebook.", "instagram.", "twitter.", "linkedin.",
+    "xing.", "yelp.", "tripadvisor.", "gelbeseiten.", "klicktel.",
+    "11880.", "cylex.", "meinestadt.", "stadtbranchenbuch.",
+    "wikipedia.", "youtube.", "maps.google", "waze.",
+    "branchenbuch.", "dastelefonbuch.", "dasoertliche.",
+    "hotfrog.", "foursquare.", "trustpilot.", "kununu.",
+    "jameda.", "doctolib.", "booking.", "trivago.", "holidaycheck.",
+]
+
 CHAIN_BLACKLIST = [
     "subway","mcdonald","burger king","kfc","pizza hut","domino","vapiano",
     "nordsee","wienerwald","hans im gluck","hans im glück","peter pane",
     "enchilada","l'osteria","dean david","dean & david","ditsch","backwerk",
     "le crobag","jim block","five guys","dunkin","starbucks","costa coffee",
-    "tchibo","balzac","yorma","cinnabon",
-    "aldi","lidl","rewe","edeka","penny","netto","kaufland",
-    "dm drogerie","rossmann","saturn","mediamarkt","ikea","obi ","bauhaus",
-    "hornbach","toom","hagebau","deichmann","snipes","foot locker",
-    "h&m","zara","primark","c&a","esprit","douglas","thalia","hugendubel",
-    "fielmann","apollo optik","mcfit","fitx","clever fit","fitness first",
-    "sixt","hertz","europcar","telekom shop","o2 shop","vodafone shop",
-    "motel one","ibis ","novotel","mercure","holiday inn","hilton","marriott",
-    "radisson","a&o hostel","meininger","takko","kik ","nkd ","woolworth",
-    "mc paper","backofenfrisch","norma ","action ",
+    "tchibo","balzac","yorma","cinnabon","aldi","lidl","rewe","edeka",
+    "penny","netto","kaufland","dm drogerie","rossmann","saturn","mediamarkt",
+    "ikea","obi ","bauhaus","hornbach","toom","hagebau","deichmann","snipes",
+    "foot locker","h&m","zara","primark","c&a","esprit","douglas","thalia",
+    "hugendubel","fielmann","apollo optik","mcfit","fitx","clever fit",
+    "fitness first","sixt","hertz","europcar","telekom shop","o2 shop",
+    "vodafone shop","motel one","ibis ","novotel","mercure","holiday inn",
+    "hilton","marriott","radisson","a&o hostel","meininger","takko",
+    "kik ","nkd ","woolworth","norma ","action ",
 ]
 
-# Keywords fuer geschlossene Betriebe
 CLOSED_KEYWORDS = [
-    "dauerhaft geschlossen","permanently closed","geschaeft geschlossen",
-    "betrieb eingestellt","aufgeloest","insolvenz","insolvent",
-    "voruebergehend geschlossen","wir haben geschlossen",
-    "diese domain ist nicht","domain expired","account suspended",
-    "parked domain","under construction","coming soon",
+    "dauerhaft geschlossen","permanently closed","betrieb eingestellt",
+    "insolvenz","insolvent","aufgeloest","domain expired",
+    "account suspended","parked domain",
 ]
 
 
 def is_chain(name):
     n = name.lower()
-    for c in CHAIN_BLACKLIST:
-        if c in n:
-            return True
-    return False
+    return any(c in n for c in CHAIN_BLACKLIST)
 
 
-def is_closed(text, name):
+def is_closed(text, name=""):
     combined = (text + " " + name).lower()
-    for kw in CLOSED_KEYWORDS:
-        if kw in combined:
-            return True
-    return False
+    return any(kw in combined for kw in CLOSED_KEYWORDS)
 
+
+def is_directory_url(url):
+    """Prueft ob eine URL ein Branchenverzeichnis ist, keine echte Website."""
+    return any(d in url.lower() for d in NOT_A_WEBSITE)
+
+
+# ─────────────────────────────────────────
+#  WEBSITE-LOOKUP via Google/DuckDuckGo
+# ─────────────────────────────────────────
+
+def find_website(company_name, address=""):
+    """
+    Sucht die offizielle Website eines Unternehmens via Google.
+    Gibt URL zurueck oder leeren String wenn nichts gefunden.
+    """
+    # Suchbegriff: Firmenname + Stadt (aus Adresse extrahiert)
+    city = ""
+    if address:
+        m = re.search(r'\d{5}\s+(\w[\w\s]{2,20})', address)
+        if m:
+            city = m.group(1).strip().split()[0]
+
+    query = f"{company_name} {city} offizielle website".strip()
+    search_url = f"https://www.google.com/search?q={quote_plus(query)}&hl=de&num=5"
+
+    try:
+        resp = requests.get(search_url, headers=HEADERS_BROWSER, timeout=12, verify=False)
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        # Google zeigt URLs in verschiedenen Elementen
+        candidates = []
+
+        # Methode 1: cite-Tags (zeigen die URL an)
+        for cite in soup.find_all("cite"):
+            url = cite.get_text(strip=True)
+            if url.startswith("http") or ("." in url and "/" in url):
+                if not url.startswith("http"):
+                    url = "https://" + url
+                candidates.append(url.split(" ")[0])
+
+        # Methode 2: a-Tags mit href zu externen Seiten
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            # Google verschleiert Links mit /url?q=
+            m = re.search(r'/url\?q=(https?://[^&]+)', href)
+            if m:
+                candidates.append(m.group(1))
+            elif re.match(r'https?://', href):
+                candidates.append(href)
+
+        # Bestes Ergebnis: erste nicht-Verzeichnis URL
+        for url in candidates:
+            url = url.split("?")[0].rstrip("/")
+            if not is_directory_url(url) and len(url) > 10:
+                # Sanity check: enthaelt die Domain den Firmennamen oder eine Stadt?
+                domain = re.sub(r'https?://(www\.)?', '', url).split('/')[0].lower()
+                print(f"    [GOOGLE] Gefunden: {url}")
+                return url
+
+    except Exception as e:
+        print(f"    [GOOGLE] Fehler bei '{company_name}': {e}")
+
+    # Fallback: DuckDuckGo
+    try:
+        ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+        resp = requests.get(ddg_url, headers=HEADERS_BROWSER, timeout=10, verify=False)
+        soup = BeautifulSoup(resp.text, "lxml")
+        for a in soup.find_all("a", {"class": re.compile(r"result__url|result__a")}):
+            href = a.get("href", "")
+            if not href:
+                href = a.get_text(strip=True)
+            if "." in href and not is_directory_url(href):
+                if not href.startswith("http"):
+                    href = "https://" + href
+                print(f"    [DDG] Gefunden: {href}")
+                return href.split("?")[0].rstrip("/")
+    except Exception as e:
+        print(f"    [DDG] Fehler: {e}")
+
+    return ""
+
+
+# ─────────────────────────────────────────
+#  SCRAPING: GELBE SEITEN
+# ─────────────────────────────────────────
 
 def scrape_gelbe_seiten(query, location, max_results=20):
     businesses = []
     page = 1
-    target = max_results * 3  # Mehr scrapen wegen Filter
+    target = max_results * 3
 
-    while len(businesses) < target and page <= 8:
+    while len(businesses) < target and page <= 10:
         url = (
             f"https://www.gelbeseiten.de/suche/"
             f"{quote_plus(query)}/{quote_plus(location)}"
@@ -85,7 +170,7 @@ def scrape_gelbe_seiten(query, location, max_results=20):
         print(f"  [GS] Seite {page}: {url}")
 
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=20, verify=False)
+            resp = requests.get(url, headers=HEADERS_BROWSER, timeout=20, verify=False)
             soup = BeautifulSoup(resp.text, "lxml")
             entries = (
                 soup.find_all("article", {"class": re.compile(r"teilnehmer", re.I)})
@@ -107,13 +192,13 @@ def scrape_gelbe_seiten(query, location, max_results=20):
                     print(f"  [SKIP-CLOSED] {biz['name']}")
                     continue
                 businesses.append(biz)
-                print(f"  [OK] {biz['name']} | {biz.get('phone','--')} | {(biz.get('website') or '--')[:40]}")
+                print(f"  [GS] + {biz['name']} | {biz.get('phone','--')}")
 
             next_btn = soup.find("a", {"class": re.compile(r"next|weiter", re.I)})
             if not next_btn:
                 break
             page += 1
-            time.sleep(1.2)
+            time.sleep(1.5)
 
         except Exception as e:
             print(f"  [GS] Fehler: {e}")
@@ -133,16 +218,20 @@ def _parse_gelbe_eintrag(entry):
     if not biz["name"]:
         biz["name"] = entry.get("data-name", "") or entry.get("aria-label", "")
 
+    # Website aus Gelbe Seiten (oft nicht vorhanden — wird spaeter per Google ergaenzt)
     for a in entry.find_all("a", href=True):
         href = a["href"]
-        if re.match(r"https?://", href) and "gelbeseiten" not in href and "google" not in href:
+        if re.match(r"https?://", href) and not is_directory_url(href):
             biz["website"] = href.split("?")[0].rstrip("/")
             break
     if not biz["website"]:
         for el in entry.find_all(attrs={"data-website": True}):
-            biz["website"] = el["data-website"]
-            break
+            w = el["data-website"]
+            if not is_directory_url(w):
+                biz["website"] = w
+                break
 
+    # Telefon
     tel_link = entry.find("a", href=re.compile(r"^tel:"))
     if tel_link:
         biz["phone"] = tel_link["href"].replace("tel:", "").strip()
@@ -152,6 +241,7 @@ def _parse_gelbe_eintrag(entry):
         if m:
             biz["phone"] = re.sub(r'\s+', ' ', m.group(1)).strip()
 
+    # Adresse
     addr = entry.find(["address","span","div","p"],
                       {"class": re.compile(r"adress|address|location|ort|street|plz", re.I)})
     if addr:
@@ -165,38 +255,9 @@ def _parse_gelbe_eintrag(entry):
     return biz
 
 
-def scrape_klicktel(query, location, max_results=20):
-    businesses = []
-    url = f"https://www.klicktel.de/branchenbuch/{quote_plus(query)}/{quote_plus(location)}/"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=20, verify=False)
-        soup = BeautifulSoup(resp.text, "lxml")
-        entries = (soup.find_all("div", {"class": re.compile(r"result-item|entry-item|branche", re.I)})
-                   or soup.find_all("article"))
-        for entry in entries:
-            biz = {"name": "", "website": "", "phone": "", "address": "", "source": "klicktel"}
-            name_el = entry.find(["h2","h3","h4","strong"])
-            if name_el:
-                biz["name"] = name_el.get_text(strip=True)
-            if not biz["name"]:
-                continue
-            if is_chain(biz["name"]) or is_closed(entry.get_text(" ", strip=True), biz["name"]):
-                continue
-            tel_el = entry.find("a", href=re.compile(r"^tel:"))
-            if tel_el:
-                biz["phone"] = tel_el["href"].replace("tel:", "").strip()
-            for a in entry.find_all("a", href=True):
-                href = a["href"]
-                if re.match(r"https?://", href) and "klicktel" not in href:
-                    biz["website"] = href.split("?")[0].rstrip("/")
-                    break
-            businesses.append(biz)
-            if len(businesses) >= max_results:
-                break
-    except Exception as e:
-        print(f"  [KT] Fehler: {e}")
-    return businesses
-
+# ─────────────────────────────────────────
+#  WEBSITE-QUALITAET PRUEFEN
+# ─────────────────────────────────────────
 
 def check_website(url):
     result = {
@@ -214,13 +275,11 @@ def check_website(url):
         "rec_class": "none",
     }
 
-    # Keine Website: guter, aber NICHT top Lead
-    # Schlechte Website ist wertvoller (Firma ist bereits online-affin)
     if not url:
-        result["issues"].append("Keine Website vorhanden")
-        result["recommendation"] = "GUTER LEAD - Keine Website"
-        result["rec_class"] = "good"
-        result["score"] = 28
+        # Kein Lead — wir wollen nur Firmen MIT Website
+        result["recommendation"] = "KEIN LEAD - Keine Website gefunden"
+        result["rec_class"] = "none"
+        result["score"] = 100
         return result
 
     if not url.startswith("http"):
@@ -233,7 +292,8 @@ def check_website(url):
 
     start = time.time()
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=10, verify=False, allow_redirects=True)
+        resp = requests.get(url, headers=HEADERS_BROWSER, timeout=10,
+                            verify=False, allow_redirects=True)
         load_time = round(time.time() - start, 2)
         result["load_time"] = load_time
         result["status_code"] = resp.status_code
@@ -254,8 +314,8 @@ def check_website(url):
             return result
 
         page_lower = resp.text.lower()
-        for kw in ["domain expired","account suspended","parked domain","under construction",
-                   "coming soon","diese domain","domain ist abgelaufen"]:
+        for kw in ["domain expired","account suspended","parked domain",
+                   "under construction","coming soon","diese domain"]:
             if kw in page_lower:
                 result["issues"].append(f"Inaktive Domain ({kw})")
                 result["score"] -= 40
@@ -279,8 +339,9 @@ def check_website(url):
             result["issues"].append("Nicht mobile-optimiert")
             result["score"] -= 15
 
-        for yr_match in re.findall(r'copyright\s+(\d{4})|(\d{4})\s+all rights|&copy;\s*(\d{4})', page_lower):
-            yr_str = yr_match[0] or yr_match[1] or yr_match[2]
+        # Veraltetes Copyright-Jahr
+        for yr_match in re.findall(r'copyright\D{0,5}(\d{4})|&copy;\D{0,5}(\d{4})', page_lower):
+            yr_str = yr_match[0] or yr_match[1]
             if yr_str:
                 yr = int(yr_str)
                 if yr < datetime.now().year - 3:
@@ -289,18 +350,18 @@ def check_website(url):
                     break
 
         if re.search(r'cellpadding|cellspacing|bgcolor=', resp.text, re.I):
-            result["issues"].append("Veraltetes HTML-Layout")
+            result["issues"].append("Veraltetes HTML-Table-Layout")
             result["score"] -= 10
 
         if any(x in page_lower for x in ["react","vue","angular","next","gatsby",
-               "wordpress","shopify","typo3","joomla","wix","squarespace"]):
+               "wordpress","shopify","typo3","joomla","wix","squarespace","jimdo"]):
             result["score"] += 10
 
         result["score"] = max(0, min(100, 50 + result["score"]))
 
     except requests.exceptions.SSLError:
         result["issues"].append("SSL-Zertifikat ungueltig")
-        result["recommendation"] = "TOP LEAD - SSL-Probleme"
+        result["recommendation"] = "TOP LEAD - SSL-Fehler"
         result["rec_class"] = "top"
         result["score"] = 8
         return result
@@ -312,25 +373,25 @@ def check_website(url):
         return result
     except requests.exceptions.Timeout:
         result["issues"].append("Timeout (>10s)")
-        result["recommendation"] = "TOP LEAD - Website extrem langsam"
+        result["recommendation"] = "TOP LEAD - Extrem langsam"
         result["rec_class"] = "top"
         result["score"] = 8
         return result
     except Exception as e:
         result["issues"].append(f"Fehler: {str(e)[:60]}")
-        result["score"] = 0
+        result["score"] = 15
 
     s = result["score"]
     if s < 15:
         result["recommendation"] = "TOP LEAD - Sehr schlechte Website"
         result["rec_class"] = "top"
-    elif s < 30:
+    elif s < 32:
         result["recommendation"] = "TOP LEAD - Schlechte Website"
         result["rec_class"] = "top"
-    elif s < 45:
+    elif s < 48:
         result["recommendation"] = "GUTER LEAD - Verbesserungsbedarf"
         result["rec_class"] = "good"
-    elif s < 60:
+    elif s < 62:
         result["recommendation"] = "MOEGLICHER LEAD - Ausbaufaehig"
         result["rec_class"] = "possible"
     else:
@@ -344,38 +405,41 @@ def make_outreach(biz, wc):
     name = biz.get("name", "Ihr Unternehmen")
     issues = wc.get("issues", [])
 
-    if not wc.get("has_website"):
-        subj = f"Online-Praesenz fuer {name}"
-        body = (f"Guten Tag,\n\nich bin auf {name} aufmerksam geworden und habe festgestellt, "
-                f"dass Sie aktuell keine eigene Website haben.\n\nUeber 80 % der Kunden recherchieren "
-                f"heute online. Eine professionelle Website kann Ihnen helfen, genau diese Kunden zu gewinnen.\n\n"
-                f"Darf ich Ihnen kurz zeigen, was ich fuer {name} tun koennte?\n\nMit freundlichen Gruessen")
-    elif not wc.get("is_reachable"):
+    if not wc.get("is_reachable") and wc.get("has_website"):
         subj = f"Ihre Website ist nicht erreichbar - {name}"
-        body = (f"Guten Tag,\n\nIhre Website ist aktuell nicht erreichbar. Potenzielle Kunden, "
-                f"die online nach {name} suchen, landen auf einer toten Seite.\n\n"
+        body = (f"Guten Tag,\n\nIhre Website ist aktuell nicht erreichbar. Kunden, die online nach "
+                f"{name} suchen, landen auf einer toten Seite und wechseln zur Konkurrenz.\n\n"
                 f"Ich kann helfen, das schnell zu beheben.\n\nMit freundlichen Gruessen")
     elif issues:
         main = issues[0]
-        if "langsam" in main.lower():
-            prob = f"Ihre Website laedt sehr langsam ({main}). Viele Besucher springen ab, bevor sie Ihre Inhalte sehen."
+        if "langsam" in main.lower() or "timeout" in main.lower():
+            prob = f"Ihre Website laedt sehr langsam ({main}). Studien zeigen: 53% der Nutzer verlassen eine Seite, die laenger als 3 Sekunden braucht."
         elif "ssl" in main.lower() or "https" in main.lower():
-            prob = "Ihre Website hat kein HTTPS. Browser zeigen Besuchern eine Sicherheitswarnung - das kostet Vertrauen."
+            prob = "Ihre Website hat kein HTTPS. Besucher sehen eine Sicherheitswarnung im Browser - das kostet massiv Vertrauen und Kunden."
         elif "mobile" in main.lower():
-            prob = "Ihre Website ist nicht fuer Smartphones optimiert. Ueber 60 % der Suchanfragen kommen vom Handy."
+            prob = "Ihre Website ist nicht fuer Smartphones optimiert. Ueber 60% der lokalen Suchen passieren heute auf dem Handy."
         elif "aktualisiert" in main.lower():
-            prob = f"Ihre Website wurde lange nicht aktualisiert ({main}). Das schadet dem Google-Ranking."
+            prob = f"Ihre Website wurde seit Jahren nicht aktualisiert ({main}). Das wirkt unprofessionell und schadet Ihrem Google-Ranking."
+        elif "inhalt" in main.lower():
+            prob = "Ihre Website hat kaum Inhalte. Google zeigt Seiten mit wenig Inhalt kaum in den Suchergebnissen an."
         else:
             prob = f"Ihre Website hat ein technisches Problem: {main}."
         subj = f"Kurze Frage zu Ihrer Website - {name}"
-        body = (f"Guten Tag,\n\n{prob}\n\nIch helfe lokalen Unternehmen wie {name} dabei, "
-                f"solche Probleme schnell zu loesen.\n\nHaetten Sie 15 Minuten fuer ein kurzes Gespraech?\n\nMit freundlichen Gruessen")
+        body = (f"Guten Tag,\n\nIch habe Ihre Website besucht und dabei festgestellt:\n\n"
+                f"{prob}\n\nIch helfe lokalen Unternehmen wie {name} dabei, genau solche Probleme "
+                f"schnell und kostenguenstig zu loesen.\n\n"
+                f"Haetten Sie 15 Minuten Zeit fuer ein kurzes Gespraech?\n\nMit freundlichen Gruessen")
     else:
-        subj = f"Digitale Praesenz - {name}"
-        body = f"Guten Tag,\n\nIch wuerde Ihnen gerne zeigen, wie Sie noch mehr Kunden online gewinnen koennen.\n\nMit freundlichen Gruessen"
+        subj = f"Ihre Website - {name}"
+        body = (f"Guten Tag,\n\nIch wuerde Ihnen gerne zeigen, wie Sie mit gezielten Verbesserungen "
+                f"noch mehr Kunden ueber Ihre Website gewinnen koennen.\n\nMit freundlichen Gruessen")
 
     return {"subject": subj, "body": body}
 
+
+# ─────────────────────────────────────────
+#  API
+# ─────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -393,13 +457,10 @@ def api_scrape():
 
     print(f"\n{'='*60}\nSuche: '{query}' in '{location}' | max={max_r}\n{'='*60}")
 
+    # 1. Unternehmen scrapen
     businesses = scrape_gelbe_seiten(query, location, max_r)
 
-    if len(businesses) < max_r // 2:
-        print("  Zu wenig Ergebnisse, versuche klicktel...")
-        extra = scrape_klicktel(query, location, max_r * 2)
-        businesses.extend(extra)
-
+    # Duplikate entfernen
     seen, unique = set(), []
     for b in businesses:
         key = b["name"].lower().strip()
@@ -408,16 +469,32 @@ def api_scrape():
             unique.append(b)
     businesses = unique[:max_r]
 
-    print(f"\n{len(businesses)} Unternehmen nach Filterung. Website-Check startet...")
-
     if not businesses:
         return jsonify({"leads": [], "stats": {}, "message": "Keine Unternehmen gefunden."}), 200
 
+    print(f"\n{len(businesses)} Unternehmen gefunden. Suche Websites...")
+
+    # 2. Fuer jedes Unternehmen Website suchen (falls Gelbe Seiten keine liefert)
+    for biz in businesses:
+        if not biz.get("website"):
+            print(f"  [LOOKUP] {biz['name'][:45]}...")
+            biz["website"] = find_website(biz["name"], biz.get("address", ""))
+            time.sleep(1.5)  # Google-Freundlichkeit
+        else:
+            print(f"  [OK-URL] {biz['name'][:45]} -> {biz['website'][:40]}")
+
+    # 3. Nur Unternehmen MIT Website behalten
+    with_website = [b for b in businesses if b.get("website")]
+    without_website = [b for b in businesses if not b.get("website")]
+    print(f"\n  Mit Website: {len(with_website)} | Ohne Website: {len(without_website)}")
+    print(f"  Analysiere nur Unternehmen MIT Website...")
+
+    # 4. Website-Qualitaet pruefen
     leads = []
-    for i, biz in enumerate(businesses):
-        name = biz.get("name", "?")
-        url  = biz.get("website", "")
-        print(f"  [{i+1}/{len(businesses)}] {name[:45]} | {url[:40] if url else '(keine Website)'}")
+    for i, biz in enumerate(with_website):
+        name = biz["name"]
+        url  = biz["website"]
+        print(f"  [{i+1}/{len(with_website)}] {name[:40]} | {url[:45]}")
         wc = check_website(url)
         outreach = make_outreach(biz, wc)
         leads.append({
@@ -439,7 +516,13 @@ def api_scrape():
         })
         time.sleep(0.8)
 
+    # Sortieren: schlechteste Website zuerst
     leads.sort(key=lambda x: x["website_score"])
+
+    # Kein-Lead-Eintraege ans Ende
+    leads_qualified = [l for l in leads if l["rec_class"] != "none"]
+    leads_none      = [l for l in leads if l["rec_class"] == "none"]
+    leads = leads_qualified + leads_none
 
     stats = {
         "total":    len(leads),
@@ -447,6 +530,7 @@ def api_scrape():
         "good":     sum(1 for l in leads if l["rec_class"] == "good"),
         "possible": sum(1 for l in leads if l["rec_class"] == "possible"),
         "none":     sum(1 for l in leads if l["rec_class"] == "none"),
+        "no_website": len(without_website),
     }
     print(f"\nFertig: {stats}")
     return jsonify({"leads": leads, "stats": stats})
@@ -456,12 +540,12 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("RAILWAY_ENVIRONMENT") is None
     print(f"""
-+--------------------------------------+
-|  LeadRadar Backend v3 gestartet      |
-|  http://localhost:{port}               |
-|  Ketten-Filter:       aktiv          |
-|  Geschlossen-Filter:  aktiv          |
-|  Score: schlechte Website = Top Lead |
-+--------------------------------------+
++------------------------------------------+
+|  LeadRadar Backend v4                    |
+|  http://localhost:{port}                   |
+|  Website-Lookup: Google + DuckDuckGo     |
+|  Ketten-Filter:  aktiv                   |
+|  Nur Leads MIT (schlechter) Website      |
++------------------------------------------+
 """)
     app.run(debug=debug, port=port, host="0.0.0.0")
